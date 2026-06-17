@@ -9,7 +9,7 @@
 # Fixtures can be overridden at runtime with FIXTURES_DIR (e.g. a mounted path).
 
 # ---- build stage ----
-FROM golang:1.22-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 
 # Module files first for layer caching. (No external deps; go.sum may be absent.)
