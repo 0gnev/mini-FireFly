@@ -83,7 +83,7 @@ func TestHealthzAlwaysOK_EvenWhenDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("healthz request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz status = %d, want 200 even in down profile", resp.StatusCode)
 	}
@@ -103,7 +103,7 @@ func TestDownProfile_SearchRefuses(t *testing.T) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Post(base+"/search", "application/json", searchBody("BEG", "AMS", "2026-07-01"))
 	if err == nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("expected connection error in down profile, got status %d", resp.StatusCode)
 	}
 	// Any transport-level error (EOF/reset/refused) satisfies "connection refused".
@@ -125,7 +125,7 @@ func TestDownProfile_HealthWorksWhileSearchRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("healthz must work in down profile: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz = %d", resp.StatusCode)
 	}
@@ -148,10 +148,10 @@ func TestRateLimit429Body(t *testing.T) {
 		if resp.StatusCode == http.StatusTooManyRequests {
 			got429 = true
 			_ = json.NewDecoder(resp.Body).Decode(&body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			break
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	if !got429 {
 		t.Fatal("expected a 429 once RPS exceeded")
@@ -174,7 +174,7 @@ func TestSearchDeterministicOverHTTP(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		b, _ := io.ReadAll(resp.Body)
 		return string(b)
 	}
@@ -198,7 +198,7 @@ func TestAdminChaosToggle(t *testing.T) {
 	resp, _ := http.Get(base + "/admin/chaos")
 	var m map[string]string
 	_ = json.NewDecoder(resp.Body).Decode(&m)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if m["profile"] != "stable" {
 		t.Fatalf("initial profile = %q", m["profile"])
 	}
@@ -210,7 +210,7 @@ func TestAdminChaosToggle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT status = %d", resp.StatusCode)
 	}
@@ -218,7 +218,7 @@ func TestAdminChaosToggle(t *testing.T) {
 	// GET reflects change
 	resp, _ = http.Get(base + "/admin/chaos")
 	_ = json.NewDecoder(resp.Body).Decode(&m)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if m["profile"] != "flaky" {
 		t.Fatalf("profile after PUT = %q, want flaky", m["profile"])
 	}
@@ -226,7 +226,7 @@ func TestAdminChaosToggle(t *testing.T) {
 	// invalid profile rejected
 	req, _ = http.NewRequest(http.MethodPut, base+"/admin/chaos", strings.NewReader(`{"profile":"boom"}`))
 	resp, _ = http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid profile PUT status = %d, want 400", resp.StatusCode)
 	}
@@ -241,7 +241,7 @@ func TestUnknownRouteEmptyOverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unknown route status = %d, want 200", resp.StatusCode)
 	}
@@ -264,7 +264,7 @@ func TestRuntimeDownToggleRefusesSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial search failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Flip to down.
 	req, _ := http.NewRequest(http.MethodPut, base+"/admin/chaos", strings.NewReader(`{"profile":"down"}`))
@@ -272,7 +272,7 @@ func TestRuntimeDownToggleRefusesSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	deadline := time.Now().Add(time.Second)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
@@ -291,5 +291,5 @@ func TestRuntimeDownToggleRefusesSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("healthz must still answer: %v", err)
 	}
-	hresp.Body.Close()
+	_ = hresp.Body.Close()
 }

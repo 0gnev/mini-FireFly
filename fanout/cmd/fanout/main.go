@@ -24,6 +24,7 @@ import (
 	"github.com/mini-firefly/fanout/internal/retry"
 	"github.com/mini-firefly/fanout/internal/server"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -54,8 +55,8 @@ func main() {
 	})
 
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(prometheus.NewGoCollector())
-	reg.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	reg.MustRegister(collectors.NewGoCollector())
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	mtr := metrics.New(reg)
 
 	registry := providers.NewRegistry(fx)

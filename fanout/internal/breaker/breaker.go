@@ -259,7 +259,7 @@ func isNoScript(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, redis.Nil) == false &&
+	return !errors.Is(err, redis.Nil) &&
 		(contains(err.Error(), "NOSCRIPT") || contains(err.Error(), "No matching script"))
 }
 

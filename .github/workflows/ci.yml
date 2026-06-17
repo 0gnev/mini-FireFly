@@ -25,7 +25,7 @@ jobs:
       matrix:
         stack: [php, go]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ---- PHP: pint --test + phpstan (level 6+, SPEC §19) ----
       - name: Setup PHP
@@ -51,7 +51,7 @@ jobs:
       # ---- Go: gofmt -l (fail if nonempty), vet, golangci-lint ----
       - name: Setup Go
         if: matrix.stack == 'go'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: gofmt
@@ -75,13 +75,13 @@ jobs:
           done
       - name: golangci-lint (fanout)
         if: matrix.stack == 'go'
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           working-directory: fanout
       - name: golangci-lint (mockprovider)
         if: matrix.stack == 'go'
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           working-directory: mockprovider
@@ -95,7 +95,7 @@ jobs:
       matrix:
         stack: [php, go]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ---- PHP: pest/phpunit (sqlite in-memory where possible, SPEC §15) ----
       - name: Setup PHP
@@ -118,7 +118,7 @@ jobs:
       # ---- Go: go test -race ./... (both modules) ----
       - name: Setup Go
         if: matrix.stack == 'go'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Go tests -race
@@ -136,15 +136,15 @@ jobs:
     needs: [lint, unit]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Bring up stack (CI override, --wait)
         run: |
           docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait
 
       - name: Run scenario suite (I1-I8)
-        # NOTE: the real I1-I8 runner is owned by agent A8. `make itest` calls
-        # scripts/itest.sh, which is a stub until that work lands.
+        # `make itest` runs scripts/itest.sh against the compose stack (the eight
+        # scenarios I1-I8 from SPEC §14.2).
         run: make itest
 
       - name: Dump compose logs on failure
@@ -153,7 +153,7 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color > compose-logs.txt 2>&1 || true
       - name: Upload compose logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: compose-logs
           path: compose-logs.txt
@@ -173,14 +173,14 @@ jobs:
       REGISTRY: ghcr.io
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -194,11 +194,20 @@ jobs:
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then PUSH="true"; fi
           for svc in core fanout mockprovider; do
             IMG="${IMAGE_PREFIX}/${svc}:${SHA}"
+            CTX="./${svc}"
+            DF="./${svc}/Dockerfile"
+            # mockprovider bakes the repo-root fixtures/ into its image, so it
+            # must build from the repo root (matches docker-compose.yml).
+            if [ "${svc}" = "mockprovider" ]; then
+              CTX="."
+              DF="mockprovider/Dockerfile"
+            fi
             echo ">> docker build ${IMG} (push=${PUSH})"
             docker buildx build \
               --tag "${IMG}" \
+              --file "${DF}" \
               --output "type=image,push=${PUSH}" \
-              "./${svc}"
+              "${CTX}"
           done
 
   # ---------------------------------------------------------------------------
@@ -216,7 +225,7 @@ jobs:
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Environment-gated SSH deploy. Guarded so it no-ops cleanly until the
       # VPS secrets (DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY) are configured.
       - name: Deploy over SSH
