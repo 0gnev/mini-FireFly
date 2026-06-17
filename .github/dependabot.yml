@@ -1,0 +1,52 @@
+# Dependabot: weekly update PRs for every dependency surface in the monorepo.
+# Grouped where it makes sense to cut PR noise.
+version: 2
+updates:
+  # ---- Go modules (one per module) ----
+  - package-ecosystem: gomod
+    directory: /fanout
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /mockprovider
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # ---- PHP / Composer (Laravel core) ----
+  - package-ecosystem: composer
+    directory: /core
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      php-deps:
+        patterns: ["*"]
+
+  # ---- GitHub Actions in the workflow ----
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # ---- Base images in each Dockerfile ----
+  - package-ecosystem: docker
+    directory: /core
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /fanout
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /mockprovider
+    schedule:
+      interval: weekly

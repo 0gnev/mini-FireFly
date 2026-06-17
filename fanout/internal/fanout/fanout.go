@@ -8,6 +8,7 @@ package fanout
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -218,7 +219,7 @@ func (s *Service) callProvider(ctx context.Context, requestID string, q model.Qu
 	res := toResult(p.Name, offers, attempts, err, time.Since(start))
 	s.observeResult(ctx, res)
 	if err != nil {
-		s.logf(requestID, p.Name, "provider call failed: "+string(res.Status), logx.Fields{"attempts": attempts, "error": res.Error})
+		s.logf(requestID, p.Name, "provider call failed: "+string(res.Status), logx.Fields{"attempts": attempts, "cause": failureCause(err), "error": res.Error})
 	}
 	return res
 }
@@ -278,5 +279,28 @@ func statusForError(err error) model.ProviderStatus {
 		return model.StatusError
 	default:
 		return model.StatusError
+	}
+}
+
+// failureCause categorizes a provider error for structured logs. The §4.3 status
+// enum collapses dropped connections and deadline timeouts both into `timeout`,
+// which hides whether a provider is DOWN (socket dropped) or merely SLOW. This
+// finer cause is logged (not surfaced on the API) so operators can tell the two
+// apart by grep instead of guessing from status alone.
+func failureCause(err error) string {
+	switch {
+	case isErr(err, adapter.ErrRateLimited):
+		return "rate_limited"
+	case isErr(err, adapter.ErrBadPayload):
+		return "bad_payload"
+	case isErr(err, adapter.ErrUpstream):
+		return "upstream" // 5xx or an unclassified transport failure (e.g. refused)
+	case isErr(err, adapter.ErrTimeout):
+		if strings.Contains(err.Error(), "connection reset") {
+			return "connection_reset" // provider dropped the socket (down / flaky)
+		}
+		return "deadline_exceeded" // provider too slow for the request budget
+	default:
+		return "error"
 	}
 }

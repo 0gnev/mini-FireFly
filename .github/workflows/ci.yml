@@ -11,9 +11,17 @@ permissions:
   contents: read
   packages: write
 
+# Cancel superseded runs on the same ref (rapid pushes / PR updates).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GO_VERSION: "1.22"
   PHP_VERSION: "8.3"
+  # Pinned (not `latest`) so golangci-lint runs are reproducible and match the
+  # checked-in .golangci.yml (v2 schema).
+  GOLANGCI_VERSION: "v2.12.2"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -46,7 +54,7 @@ jobs:
       - name: PHPStan (level 6+)
         if: matrix.stack == 'php'
         working-directory: core
-        run: ./vendor/bin/phpstan analyse --no-progress
+        run: ./vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
       # ---- Go: gofmt -l (fail if nonempty), vet, golangci-lint ----
       - name: Setup Go
@@ -83,13 +91,13 @@ jobs:
         if: matrix.stack == 'go'
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: ${{ env.GOLANGCI_VERSION }}
           working-directory: fanout
       - name: golangci-lint (mockprovider)
         if: matrix.stack == 'go'
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: ${{ env.GOLANGCI_VERSION }}
           working-directory: mockprovider
 
   # ---------------------------------------------------------------------------
@@ -100,6 +108,16 @@ jobs:
       fail-fast: false
       matrix:
         stack: [php, go]
+    # Real Redis so the SPEC §7.4 idempotency Feature tests (BookingRedisTest) run
+    # for real instead of self-skipping. The go matrix leg simply ignores it.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v5
 
@@ -119,6 +137,12 @@ jobs:
       - name: PHP tests
         if: matrix.stack == 'php'
         working-directory: core
+        env:
+          # Point at the real Redis service so the §7.4 idempotency tests run
+          # (otherwise BookingRedisTest skips itself). DB stays sqlite in-memory.
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: "6379"
+          REDIS_CLIENT: phpredis
         run: php artisan test
 
       # ---- Go: go test -race ./... (both modules) ----
@@ -141,6 +165,27 @@ jobs:
             echo ">> go test -race ./... ($mod)"
             (cd "$mod" && go test -race ./...)
           done
+
+  # ---------------------------------------------------------------------------
+  security:
+    name: security scan (trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Filesystem scan: vulnerable deps (go.sum / composer.lock), leaked secrets,
+      # and Dockerfile/compose misconfig. Report-only (exit-code 0) so transient
+      # upstream CVEs don't block merges; findings are visible in the job log.
+      # Flip exit-code to "1" (and drop ignore-unfixed) to make it enforcing.
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
 
   # ---------------------------------------------------------------------------
   integration:
@@ -207,8 +252,8 @@ jobs:
           IMAGE_PREFIX="${REGISTRY}/$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           PUSH="false"
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then PUSH="true"; fi
+          SHORT="$(printf '%s' "${SHA}" | cut -c1-12)"
           for svc in core fanout mockprovider; do
-            IMG="${IMAGE_PREFIX}/${svc}:${SHA}"
             CTX="./${svc}"
             DF="./${svc}/Dockerfile"
             # mockprovider bakes the repo-root fixtures/ into its image, so it
@@ -217,10 +262,18 @@ jobs:
               CTX="."
               DF="mockprovider/Dockerfile"
             fi
-            echo ">> docker build ${IMG} (push=${PUSH})"
+            # Tags: full SHA + short SHA always; :latest only when pushing (main).
+            tags=(--tag "${IMAGE_PREFIX}/${svc}:${SHA}" --tag "${IMAGE_PREFIX}/${svc}:${SHORT}")
+            if [ "${PUSH}" = "true" ]; then
+              tags+=(--tag "${IMAGE_PREFIX}/${svc}:latest")
+            fi
+            echo ">> docker build ${svc} (push=${PUSH})"
+            # GHA layer cache (scoped per service) makes repeat runs fast.
             docker buildx build \
-              --tag "${IMG}" \
+              "${tags[@]}" \
               --file "${DF}" \
+              --cache-from "type=gha,scope=${svc}" \
+              --cache-to "type=gha,mode=max,scope=${svc}" \
               --output "type=image,push=${PUSH}" \
               "${CTX}"
           done

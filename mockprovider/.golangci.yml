@@ -1,0 +1,13 @@
+# golangci-lint config (v2 schema). SPEC §19: default set + errcheck + gocritic.
+# Checked in so the linter is reproducible and matches CI (which pins the
+# golangci-lint version rather than tracking `latest`).
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard   # govet, errcheck, ineffassign, staticcheck, unused
+  enable:
+    - errcheck        # explicit per SPEC §19 (also in the standard set)
+    - gocritic        # opinionated diagnostics/style checks

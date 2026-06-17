@@ -129,6 +129,7 @@ make chaos-slow  P=b   # set mock-b to 'slow'
 make chaos-down  P=d   # set mock-d to 'down'
 make chaos-reset       # all mocks back to 'stable'
 make demo         # scripted walkthrough
+make load         # k6 load smoke (50 RPS x 60s vs /search, §14.4)
 make logs / ps / config
 ```
 
@@ -298,6 +299,39 @@ entry + one config row**. Verified against the actual code (`fanout/internal/ada
 
 No changes to the fan-out core, breaker, limiter, retry, or bulkhead are required — those
 operate uniformly on every registered provider.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`:
+`lint` → `unit` → `security` → `integration` → `build & push` → `deploy` (optional).
+
+- **lint** — Pint + PHPStan (PHP); gofmt, `go vet`, and golangci-lint (version pinned;
+  config in each module's `.golangci.yml`: standard set + `errcheck` + `gocritic`).
+- **unit** — `php artisan test` against a real Redis service (so the idempotency Feature
+  tests run instead of self-skipping) and `go test -race` for both Go modules.
+- **security** — Trivy filesystem scan (vulnerable deps, leaked secrets, Dockerfile
+  misconfig), report-only by default. Dependabot (`.github/dependabot.yml`) opens weekly
+  update PRs for Go modules, Composer, Actions, and base images.
+- **integration** — brings the compose stack up (`--wait`) and runs the I1–I8 suite.
+- **build & push** — buildx with a GHA layer cache builds all three images and pushes to
+  GHCR on `main` (tagged with full SHA, short SHA, and `latest`).
+- **deploy** — optional, environment-gated SSH deploy; no-ops until the VPS secrets are set.
+
+Concurrent runs on the same ref are auto-cancelled.
+
+**Branch protection (recommended):** require the `lint`, `unit`, and `integration` checks
+to pass before merging to `main` (Settings → Branches → Add rule) — CI green is the merge bar.
+
+### Load smoke (optional, SPEC §14.4)
+
+`make load` runs a [k6](https://k6.io) script (`tests/load/smoke.js`): 50 RPS × 60s against
+`/search`, asserting p99 < deadline + 200 ms and zero 5xx. Set mixed chaos first for a
+realistic picture (`make chaos-slow P=b && make chaos-flaky P=c`, then `make chaos-reset`).
+
+> `core` runs the single-worker `php artisan serve` dev server, which serializes requests —
+> fine for the demo, but a sustained 50-RPS run needs a concurrent front (php-fpm + nginx) to
+> measure the aggregator rather than the server. For the dev server, lower the rate:
+> `make load RPS=10 DURATION=20s`.
 
 ## Repository layout
 

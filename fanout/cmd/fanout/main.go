@@ -45,7 +45,6 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.redisAddr})
 
 	bootCtx, bootCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer bootCancel()
 
 	brk, _ := breaker.New(bootCtx, rdb, func(provider, op string, err error) {
 		log.Error("", provider, "breaker fail-open: Redis unreachable", logx.Fields{"op": op, "error": err.Error()})
@@ -53,6 +52,10 @@ func main() {
 	lim, _ := limiter.New(bootCtx, rdb, func(provider string, err error) {
 		log.Error("", provider, "limiter fail-open: Redis unreachable", logx.Fields{"error": err.Error()})
 	})
+	// The boot context only bounds the breaker/limiter startup probes; release it
+	// now (instead of deferring) so a later os.Exit on a fatal server error does
+	// not skip the cancel — satisfies gocritic's exitAfterDefer and is cleaner.
+	bootCancel()
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector())

@@ -16,7 +16,7 @@ P ?= a
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down migrate seed test itest lint \
+.PHONY: help up down migrate seed test itest lint load \
         chaos-flaky chaos-slow chaos-down chaos-reset demo logs ps config
 
 help: ## Show this help.
@@ -59,7 +59,7 @@ itest: ## Run the integration scenario suite (I1-I8) against a running stack.
 lint: ## Run all linters (PHP pint+phpstan, Go gofmt+vet+golangci-lint).
 	@echo ">> PHP lint (core)"
 	cd core && composer install --no-interaction --prefer-dist --no-progress && \
-		./vendor/bin/pint --test && ./vendor/bin/phpstan analyse --no-progress
+		./vendor/bin/pint --test && ./vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 	@echo ">> Go lint (fanout)"
 	cd fanout && test -z "$$(gofmt -l .)" && go vet ./...
 	@echo ">> Go lint (mockprovider)"
@@ -82,6 +82,13 @@ chaos-reset: ## Reset all providers back to 'stable'.
 
 demo: ## Scripted healthy -> incident -> recovery walkthrough (< 3 min).
 	./scripts/demo.sh
+
+load: ## k6 load smoke (50 RPS x 60s vs /search, SPEC §14.4). Set mixed chaos first.
+	@echo ">> k6 load smoke vs http://localhost:8000 (override RPS/DURATION via env)"
+	docker run --rm --add-host=host.docker.internal:host-gateway \
+		-e BASE_URL=http://host.docker.internal:8000 \
+		-e RPS="$(RPS)" -e DURATION="$(DURATION)" \
+		-v "$(PWD)/tests/load:/scripts:ro" grafana/k6 run /scripts/smoke.js
 
 logs: ## Tail logs for all services.
 	$(COMPOSE) -f $(COMPOSE_FILE) logs -f --tail=100

@@ -60,9 +60,15 @@ class BookingService
     private function tryAcquireRedisLock(string $key, string $requestHash): string
     {
         try {
-            // phpredis array-options form: SET key val NX EX 86400.
-            // Returns true on first set, false when the key already exists.
-            $ok = Redis::set('idem:'.$key, $requestHash, ['NX', 'EX' => self::IDEM_TTL_S]);
+            // SET idem:{key} {hash} EX 86400 NX. NOTE: Laravel's Redis::set takes
+            // FLAT args set(key, value, 'EX', ttl, 'NX') — the raw phpredis
+            // array-options form (['NX','EX'=>ttl]) throws "access offset of array
+            // on array" and would silently force the MySQL fallback on every call.
+            // Returns true on first set, false (null) when the key already exists.
+            // larastan's Redis facade stub types set() as 2-3 args and doesn't model
+            // this (correct, runtime-verified) variadic form, so ignore its counts.
+            // @phpstan-ignore arguments.count, argument.type
+            $ok = Redis::set('idem:'.$key, $requestHash, 'EX', self::IDEM_TTL_S, 'NX');
 
             return $ok ? 'acquired' : 'exists';
         } catch (Throwable $e) {
