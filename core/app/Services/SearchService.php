@@ -54,6 +54,7 @@ class SearchService
         if ($cached !== null) {
             $this->metrics->increment('core_search_requests_total', ['cache' => 'hit']);
             Log::info('search cache hit', $this->logCtx($requestId, $query));
+            $this->dispatchCacheHitLogging($requestId, $query, $cached);
 
             return $this->withRequestMeta($cached, $requestId, 'hit');
         }
@@ -240,6 +241,55 @@ class SearchService
         } catch (Throwable $e) {
             // Dispatch failures (e.g. Redis queue down) must not fail the request.
             Log::warning('failed to dispatch provider_calls logging job', [
+                'request_id' => $requestId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * On a cache hit, log one provider_calls row per provider with cache_hit=1 so
+     * the cache-hit-ratio analytics (§11.3) is meaningful. No provider was actually
+     * called, so latency/attempts are 0; these rows are excluded from the
+     * provider-performance queries (which filter cache_hit = 0). Loss-tolerant.
+     *
+     * @param  array{origin: string, destination: string, depart_date: string, return_date: string|null, passengers: int}  $query
+     * @param  array<string, mixed>  $cached  the cached response body
+     */
+    private function dispatchCacheHitLogging(string $requestId, array $query, array $cached): void
+    {
+        try {
+            /** @var array<string, mixed> $providers */
+            $providers = is_array($cached['providers'] ?? null) ? $cached['providers'] : [];
+            $partial = (bool) ($cached['partial'] ?? false);
+            /** @var array<string, mixed> $meta */
+            $meta = is_array($cached['meta'] ?? null) ? $cached['meta'] : [];
+            $deadlineMs = (int) ($meta['deadline_ms'] ?? $this->deadlineMs);
+
+            $rows = [];
+            foreach ($providers as $name => $p) {
+                $p = is_array($p) ? $p : [];
+                $rows[] = [
+                    'request_id' => $requestId,
+                    'provider' => (string) $name,
+                    'status' => (string) ($p['status'] ?? 'ok'),
+                    'latency_ms' => 0,
+                    'attempts' => 0,
+                    'breaker_state' => '',
+                    'cache_hit' => 1,
+                    'offers_count' => (int) ($p['offers'] ?? 0),
+                    'partial' => $partial ? 1 : 0,
+                    'deadline_ms' => $deadlineMs,
+                    'origin' => $query['origin'],
+                    'destination' => $query['destination'],
+                ];
+            }
+
+            if ($rows !== []) {
+                LogProviderCalls::dispatch($rows);
+            }
+        } catch (Throwable $e) {
+            Log::warning('failed to dispatch cache-hit provider_calls logging job', [
                 'request_id' => $requestId,
                 'error' => $e->getMessage(),
             ]);

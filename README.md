@@ -223,18 +223,22 @@ production posture (SPEC §19):
 Every provider call attempt set is logged (async, loss-tolerant) to
 `firefly.provider_calls`. Canonical queries (`http://localhost:8123`, db `firefly`):
 
+A cache hit logs one row per provider with `cache_hit = 1` (latency/attempts 0) so the
+cache-hit-ratio is meaningful; the provider-performance queries therefore filter
+`cache_hit = 0` to count only real provider calls, while the ratio query spans all rows.
+
 ```sql
--- p99 latency per provider, 5m buckets
+-- p99 latency per provider, 5m buckets (real calls only)
 SELECT provider, toStartOfFiveMinutes(ts) AS t, quantile(0.99)(latency_ms) AS p99
-FROM firefly.provider_calls WHERE ts > now() - INTERVAL 6 HOUR
+FROM firefly.provider_calls WHERE ts > now() - INTERVAL 6 HOUR AND cache_hit = 0
 GROUP BY provider, t ORDER BY t;
 
--- error-rate breakdown
+-- error-rate breakdown (real calls only)
 SELECT provider, status, count() AS c
-FROM firefly.provider_calls WHERE ts > now() - INTERVAL 1 HOUR
+FROM firefly.provider_calls WHERE ts > now() - INTERVAL 1 HOUR AND cache_hit = 0
 GROUP BY provider, status;
 
--- cache hit ratio over time
+-- cache hit ratio over time (all rows: hits + misses)
 SELECT toStartOfFiveMinutes(ts) AS t, avg(cache_hit) AS hit_ratio
 FROM firefly.provider_calls GROUP BY t ORDER BY t;
 ```

@@ -53,11 +53,15 @@ class ProviderStatusService
     /**
      * Read breaker:{provider}.state from Redis (SPEC §10.1). Defaults to "closed"
      * when the hash is missing or Redis is down (fail-open display).
+     *
+     * Uses the 'fanout' connection (empty key prefix): the breaker hash is written
+     * by the Go fanout under the RAW key `breaker:{provider}`, so reading it through
+     * the default (prefixed) connection would always miss and report "closed".
      */
     private function breakerState(string $provider): string
     {
         try {
-            $state = Redis::hget('breaker:'.$provider, 'state');
+            $state = Redis::connection('fanout')->hget('breaker:'.$provider, 'state');
 
             return is_string($state) && $state !== '' ? $state : 'closed';
         } catch (Throwable) {
@@ -94,7 +98,7 @@ class ProviderStatusService
                 quantile(0.99)(latency_ms) AS p99_ms,
                 avgIf(1, status != 'ok') AS error_rate
             FROM firefly.provider_calls
-            WHERE ts > now() - INTERVAL 5 MINUTE
+            WHERE ts > now() - INTERVAL 5 MINUTE AND cache_hit = 0
             GROUP BY provider
         SQL;
 

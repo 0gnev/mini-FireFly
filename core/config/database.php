@@ -168,6 +168,22 @@ return [
             'database' => env('REDIS_CACHE_DB', '1'),
         ],
 
+        // Shared resilience state (breaker:{provider}, rl:{provider}) is written
+        // by the Go fanout service with RAW, unprefixed keys on DB 0 (SPEC §10.1,
+        // §11.2). This connection reads them through an EMPTY prefix so the keys
+        // resolve to exactly what fanout wrote — without it, the Laravel global
+        // prefix (mini-firefly_database_) would make every breaker read miss and
+        // always report "closed" (SPEC §8.4).
+        'fanout' => [
+            'url' => env('REDIS_URL'),
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+            'username' => env('REDIS_USERNAME'),
+            'password' => env('REDIS_PASSWORD'),
+            'port' => env('REDIS_PORT', '6379'),
+            'database' => env('REDIS_DB', '0'),
+            'options' => ['prefix' => ''],
+        ],
+
     ],
 
 ];
