@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # mini-FireFly core (Laravel 11, PHP 8.3) — built to run the public API,
 # artisan migrate/seed, and the Redis-backed queue worker.
-FROM php:8.3-cli AS base
+FROM php:8.5-cli AS base
 
 # System deps for the PHP extensions we need.
 RUN apt-get update && apt-get install -y --no-install-recommends \
