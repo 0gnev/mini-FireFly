@@ -208,16 +208,19 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
+    # NOTE: the `secrets` context is NOT allowed inside `if:` expressions. Surface
+    # the deploy secrets as job-level env (env CAN read secrets) and gate the steps
+    # on `env.DEPLOY_HOST`, which IS available to step `if:` conditionals.
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
     steps:
       - uses: actions/checkout@v4
       # Environment-gated SSH deploy. Guarded so it no-ops cleanly until the
       # VPS secrets (DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY) are configured.
       - name: Deploy over SSH
-        if: ${{ secrets.DEPLOY_HOST != '' }}
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        if: ${{ env.DEPLOY_HOST != '' }}
         run: |
           set -e
           mkdir -p ~/.ssh
@@ -227,5 +230,5 @@ jobs:
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             'cd ~/mini-firefly && docker compose pull && docker compose up -d'
       - name: Skip notice
-        if: ${{ secrets.DEPLOY_HOST == '' }}
+        if: ${{ env.DEPLOY_HOST == '' }}
         run: echo "DEPLOY_HOST not set — skipping SSH deploy (optional job)."
