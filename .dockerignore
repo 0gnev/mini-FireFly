@@ -1,0 +1,10 @@
+# This root .dockerignore applies ONLY to builds whose context is the repo root.
+# Currently that's the mockprovider image (its Dockerfile COPYs mockprovider/ and
+# fixtures/). The core (./core) and fanout (./fanout) builds use their own context
+# and their own .dockerignore, so this file does not affect them.
+#
+# Exclude everything, then re-include only what the mock build needs. This keeps
+# the build context tiny (no core/vendor, no .git, no node_modules).
+*
+!mockprovider
+!fixtures

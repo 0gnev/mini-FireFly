@@ -1,0 +1,28 @@
+# Grafana datasource provisioning (SPEC §12.2).
+# Both Prometheus and ClickHouse are provisioned automatically.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+    editable: true
+
+  - name: ClickHouse
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    jsonData:
+      host: clickhouse
+      port: 9000
+      protocol: native
+      defaultDatabase: firefly
+      # Native protocol auth (default user, no password — demo only, SPEC §19).
+      username: default
+    editable: true

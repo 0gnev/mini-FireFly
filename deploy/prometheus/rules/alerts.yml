@@ -1,0 +1,49 @@
+groups:
+  - name: mini-firefly.provider-health
+    rules:
+      # SPEC §12.3 — status != ok share > 30% over 5m, per provider.
+      # fanout_provider_requests_total{provider,status} is a counter (§12.1).
+      - alert: ProviderErrorRateHigh
+        expr: |
+          (
+            sum by (provider) (
+              rate(fanout_provider_requests_total{status!="ok"}[5m])
+            )
+            /
+            clamp_min(
+              sum by (provider) (
+                rate(fanout_provider_requests_total[5m])
+              ),
+              1e-9
+            )
+          ) > 0.30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Provider {{ $labels.provider }} error share > 30% (5m)"
+          description: "More than 30% of calls to provider {{ $labels.provider }} are not 'ok' over the last 5 minutes."
+
+      # SPEC §12.3 — fanout_breaker_state == 2 (open) for > 1m.
+      - alert: BreakerOpen
+        expr: fanout_breaker_state == 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker OPEN for provider {{ $labels.provider }}"
+          description: "Breaker for {{ $labels.provider }} has been open for more than 1 minute."
+
+      # SPEC §12.3 — p99 of fanout_request_duration_seconds > 1.8s over 5m.
+      - alert: FanoutSlow
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(fanout_request_duration_seconds_bucket[5m]))
+          ) > 1.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fan-out p99 latency > 1.8s (5m)"
+          description: "p99 of the whole fan-out request duration has exceeded 1.8s over the last 5 minutes."

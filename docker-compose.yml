@@ -1,0 +1,340 @@
+# mini-FireFly — full local stack (SPEC §16.1).
+# Owned by infra agent A7. Service Dockerfiles (core/, fanout/, mockprovider/)
+# are owned by other agents; this file references their build contexts.
+#
+# Ports (host -> container):
+#   core        8000 -> 8000
+#   fanout      8090 -> 8090
+#   mock-a..d   8081..8084 -> 8080
+#   mysql       3306 -> 3306
+#   redis       6379 -> 6379
+#   clickhouse  8123 -> 8123 (HTTP), 9000 -> 9000 (native)
+#   prometheus  9090 -> 9090
+#   grafana     3000 -> 3000
+
+name: mini-firefly
+
+x-mock-base: &mock-base
+  build:
+    # The mock Dockerfile bakes the frozen fixtures/ into the image, so the
+    # build context must be the repo ROOT (it COPYs both mockprovider/ and
+    # fixtures/). A root .dockerignore keeps this context lean.
+    context: .
+    dockerfile: mockprovider/Dockerfile
+  image: mini-firefly/mockprovider:dev
+  restart: unless-stopped
+  networks: [firefly]
+  # /healthz returns 200 even in the `down` profile (SPEC §5.2): it reports
+  # the health of the *process*, not the simulated provider — exactly what we
+  # want compose to gate on.
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+    start_period: 5s
+
+services:
+  # ---------------------------------------------------------------------------
+  # Data stores
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: firefly
+      MYSQL_USER: firefly
+      MYSQL_PASSWORD: firefly
+    command: --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks: [firefly]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "6379:6379"
+    networks: [firefly]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    environment:
+      CLICKHOUSE_DB: firefly
+      # Allow default user from any host inside the compose network (demo only).
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      # Schema bootstrap (SPEC §11.3). Files in this dir run on first start.
+      - ./deploy/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks: [firefly]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Mock providers (chaos rig) — one image, four instances (SPEC §5).
+  # Host ports 8081-8084 -> container 8080. PROVIDER_ID selects wire format.
+  # ---------------------------------------------------------------------------
+  mock-a:
+    <<: *mock-base
+    environment:
+      PROVIDER_ID: a
+      PORT: "8080"
+      CHAOS_PROFILE: stable
+      CHAOS_SEED: "42"
+      RATE_LIMIT_RPS: "50"
+      BASE_LATENCY_MS: "80"
+    ports:
+      - "8081:8080"
+
+  mock-b:
+    <<: *mock-base
+    environment:
+      PROVIDER_ID: b
+      PORT: "8080"
+      CHAOS_PROFILE: stable
+      CHAOS_SEED: "42"
+      RATE_LIMIT_RPS: "50"
+      # mock-b is the "naturally slower" provider (~400ms in `stable`, still well
+      # under the 800ms per-attempt timeout). This makes the `slow` profile
+      # (5×400 ≈ 1000-3000ms) reliably exceed the per-attempt timeout on BOTH
+      # attempts, so scenario I2 (§14.2: slow → b:timeout) holds as written
+      # instead of the retry landing on a fast draw and succeeding.
+      BASE_LATENCY_MS: "400"
+    ports:
+      - "8082:8080"
+
+  mock-c:
+    <<: *mock-base
+    environment:
+      PROVIDER_ID: c
+      PORT: "8080"
+      CHAOS_PROFILE: stable
+      CHAOS_SEED: "42"
+      RATE_LIMIT_RPS: "50"
+      BASE_LATENCY_MS: "80"
+    ports:
+      - "8083:8080"
+
+  mock-d:
+    <<: *mock-base
+    environment:
+      PROVIDER_ID: d
+      PORT: "8080"
+      CHAOS_PROFILE: stable
+      CHAOS_SEED: "42"
+      RATE_LIMIT_RPS: "50"
+      BASE_LATENCY_MS: "80"
+    ports:
+      - "8084:8080"
+
+  # ---------------------------------------------------------------------------
+  # Go fan-out service (SPEC §6, §13).
+  # ---------------------------------------------------------------------------
+  fanout:
+    build:
+      context: ./fanout
+    image: mini-firefly/fanout:dev
+    restart: unless-stopped
+    environment:
+      PORT: "8090"
+      REDIS_ADDR: "redis:6379"
+      BULKHEAD_MAX: "8"
+      RETRY_MAX_ATTEMPTS: "2"
+      RETRY_BASE_MS: "100"
+      FX_USD_EUR: "0.92"
+      FX_RSD_EUR: "0.0085"
+    ports:
+      - "8090:8090"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [firefly]
+    healthcheck:
+      # fanout /healthz checks Redis connectivity (SPEC §6.4).
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # Laravel core API (SPEC §7, §13).
+  # ---------------------------------------------------------------------------
+  core:
+    build:
+      context: ./core
+    image: mini-firefly/core:dev
+    restart: unless-stopped
+    environment: &core-env
+      APP_NAME: mini-firefly
+      APP_ENV: local
+      # Demo key; core's image may also run `php artisan key:generate`.
+      APP_KEY: base64:Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyMTIzNDU2Nzg=
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+
+      LOG_CHANNEL: stderr
+      LOG_LEVEL: debug
+
+      # MySQL (SPEC §11.1, §13).
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: firefly
+      DB_USERNAME: firefly
+      DB_PASSWORD: firefly
+
+      # Redis cache / queue / breaker-state-readers (SPEC §11.2, §7.1).
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_CLIENT: phpredis
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+
+      # Fan-out + deadlines (SPEC §13 core).
+      FANOUT_URL: http://fanout:8090
+      SEARCH_DEADLINE_MS: "2000"
+      SEARCH_CACHE_TTL_S: "90"
+
+      # ClickHouse async logging pipeline (SPEC §7.1, §13).
+      CLICKHOUSE_DSN: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: firefly
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      fanout:
+        condition: service_healthy
+      mock-a:
+        condition: service_healthy
+      mock-b:
+        condition: service_healthy
+      mock-c:
+        condition: service_healthy
+      mock-d:
+        condition: service_healthy
+    networks: [firefly]
+    healthcheck:
+      # core /healthz aggregates MySQL/Redis/fanout pings (SPEC §8.5).
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/api/v1/healthz') === false ? 1 : 0);"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Core queue worker — drains the async ClickHouse logging jobs (SPEC §7.1).
+  # Same image as `core`, but runs `php artisan queue:work` (entrypoint `queue`
+  # mode) instead of serving HTTP. Without it, provider_calls rows never land in
+  # ClickHouse (loss-tolerant by design, but the demo/Grafana need the data).
+  # ---------------------------------------------------------------------------
+  core-queue:
+    build:
+      context: ./core
+    image: mini-firefly/core:dev
+    restart: unless-stopped
+    command: ["queue"]
+    environment: *core-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks: [firefly]
+
+  # ---------------------------------------------------------------------------
+  # Observability (SPEC §12).
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks: [firefly]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # ClickHouse datasource plugin (provisioned in §12.2).
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks: [firefly]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+networks:
+  firefly:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  clickhouse-data:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,231 @@
+# mini-FireFly CI (SPEC §15).
+# Jobs: lint -> unit -> integration -> build -> deploy(optional, main only).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  GO_VERSION: "1.22"
+  PHP_VERSION: "8.3"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint (${{ matrix.stack }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [php, go]
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- PHP: pint --test + phpstan (level 6+, SPEC §19) ----
+      - name: Setup PHP
+        if: matrix.stack == 'php'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          tools: composer:v2
+          coverage: none
+      - name: Composer install (core)
+        if: matrix.stack == 'php'
+        working-directory: core
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Pint (--test)
+        if: matrix.stack == 'php'
+        working-directory: core
+        run: ./vendor/bin/pint --test
+      - name: PHPStan (level 6+)
+        if: matrix.stack == 'php'
+        working-directory: core
+        run: ./vendor/bin/phpstan analyse --no-progress
+
+      # ---- Go: gofmt -l (fail if nonempty), vet, golangci-lint ----
+      - name: Setup Go
+        if: matrix.stack == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: gofmt
+        if: matrix.stack == 'go'
+        run: |
+          set -e
+          for mod in fanout mockprovider; do
+            echo ">> gofmt -l $mod"
+            unformatted=$(gofmt -l "$mod")
+            if [ -n "$unformatted" ]; then
+              echo "::error::gofmt found unformatted files:"; echo "$unformatted"; exit 1
+            fi
+          done
+      - name: go vet
+        if: matrix.stack == 'go'
+        run: |
+          set -e
+          for mod in fanout mockprovider; do
+            echo ">> go vet ./... ($mod)"
+            (cd "$mod" && go vet ./...)
+          done
+      - name: golangci-lint (fanout)
+        if: matrix.stack == 'go'
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: fanout
+      - name: golangci-lint (mockprovider)
+        if: matrix.stack == 'go'
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: mockprovider
+
+  # ---------------------------------------------------------------------------
+  unit:
+    name: unit (${{ matrix.stack }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [php, go]
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- PHP: pest/phpunit (sqlite in-memory where possible, SPEC §15) ----
+      - name: Setup PHP
+        if: matrix.stack == 'php'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          tools: composer:v2
+          extensions: pdo_sqlite, sqlite3, redis
+          coverage: none
+      - name: Composer install (core)
+        if: matrix.stack == 'php'
+        working-directory: core
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: PHP tests
+        if: matrix.stack == 'php'
+        working-directory: core
+        run: php artisan test
+
+      # ---- Go: go test -race ./... (both modules) ----
+      - name: Setup Go
+        if: matrix.stack == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Go tests -race
+        if: matrix.stack == 'go'
+        run: |
+          set -e
+          for mod in fanout mockprovider; do
+            echo ">> go test -race ./... ($mod)"
+            (cd "$mod" && go test -race ./...)
+          done
+
+  # ---------------------------------------------------------------------------
+  integration:
+    name: integration (I1-I8)
+    needs: [lint, unit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bring up stack (CI override, --wait)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait
+
+      - name: Run scenario suite (I1-I8)
+        # NOTE: the real I1-I8 runner is owned by agent A8. `make itest` calls
+        # scripts/itest.sh, which is a stub until that work lands.
+        run: make itest
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color > compose-logs.txt 2>&1 || true
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+          if-no-files-found: ignore
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v || true
+
+  # ---------------------------------------------------------------------------
+  build:
+    name: build & push images
+    needs: [integration]
+    runs-on: ubuntu-latest
+    # Push to GHCR only on main; PRs build to validate Dockerfiles without push.
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on main) images
+        run: |
+          set -e
+          SHA="${GITHUB_SHA}"
+          PUSH="false"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then PUSH="true"; fi
+          for svc in core fanout mockprovider; do
+            IMG="${IMAGE_PREFIX}/${svc}:${SHA}"
+            echo ">> docker build ${IMG} (push=${PUSH})"
+            docker buildx build \
+              --tag "${IMG}" \
+              --output "type=image,push=${PUSH}" \
+              "./${svc}"
+          done
+
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: deploy (optional)
+    needs: [build]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      # Environment-gated SSH deploy. Guarded so it no-ops cleanly until the
+      # VPS secrets (DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY) are configured.
+      - name: Deploy over SSH
+        if: ${{ secrets.DEPLOY_HOST != '' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "${DEPLOY_SSH_KEY}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/id_deploy \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            'cd ~/mini-firefly && docker compose pull && docker compose up -d'
+      - name: Skip notice
+        if: ${{ secrets.DEPLOY_HOST == '' }}
+        run: echo "DEPLOY_HOST not set — skipping SSH deploy (optional job)."

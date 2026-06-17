@@ -1,0 +1,26 @@
+# Go
+/fanout/bin/
+/mockprovider/bin/
+*.test
+*.out
+
+# PHP / Laravel
+/core/vendor/
+/core/node_modules/
+/core/.env
+/core/storage/*.key
+/core/storage/logs/*.log
+/core/storage/framework/cache/data/*
+/core/storage/framework/sessions/*
+/core/storage/framework/views/*
+/core/bootstrap/cache/*.php
+
+# Docker / local
+.env
+*.local
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

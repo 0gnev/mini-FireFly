@@ -1,0 +1,22 @@
+[
+  { "iata": "BEG", "city": "Belgrade",   "tz": "Europe/Belgrade" },
+  { "iata": "AMS", "city": "Amsterdam",  "tz": "Europe/Amsterdam" },
+  { "iata": "CDG", "city": "Paris",      "tz": "Europe/Paris" },
+  { "iata": "FRA", "city": "Frankfurt",  "tz": "Europe/Berlin" },
+  { "iata": "IST", "city": "Istanbul",   "tz": "Europe/Istanbul" },
+  { "iata": "VIE", "city": "Vienna",     "tz": "Europe/Vienna" },
+  { "iata": "ZRH", "city": "Zurich",     "tz": "Europe/Zurich" },
+  { "iata": "LHR", "city": "London",     "tz": "Europe/London" },
+  { "iata": "JFK", "city": "New York",   "tz": "America/New_York" },
+  { "iata": "MUC", "city": "Munich",     "tz": "Europe/Berlin" },
+  { "iata": "BCN", "city": "Barcelona",  "tz": "Europe/Madrid" },
+  { "iata": "MAD", "city": "Madrid",     "tz": "Europe/Madrid" },
+  { "iata": "FCO", "city": "Rome",       "tz": "Europe/Rome" },
+  { "iata": "ATH", "city": "Athens",     "tz": "Europe/Athens" },
+  { "iata": "PRG", "city": "Prague",     "tz": "Europe/Prague" },
+  { "iata": "BUD", "city": "Budapest",   "tz": "Europe/Budapest" },
+  { "iata": "WAW", "city": "Warsaw",     "tz": "Europe/Warsaw" },
+  { "iata": "CPH", "city": "Copenhagen", "tz": "Europe/Copenhagen" },
+  { "iata": "ARN", "city": "Stockholm",  "tz": "Europe/Stockholm" },
+  { "iata": "DXB", "city": "Dubai",      "tz": "Asia/Dubai" }
+]

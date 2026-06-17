@@ -1,0 +1,15 @@
+# Grafana dashboard provider (SPEC §12.2).
+# Loads JSON dashboards from /etc/grafana/provisioning/dashboards.
+apiVersion: 1
+
+providers:
+  - name: mini-firefly
+    orgId: 1
+    folder: mini-FireFly
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

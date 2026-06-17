@@ -1,0 +1,32 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: mini-firefly
+
+rule_files:
+  - /etc/prometheus/rules/alerts.yml
+
+scrape_configs:
+  # Go fan-out service — exposes the fanout_* metrics from SPEC §12.1.
+  - job_name: fanout
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fanout:8090"]
+        labels:
+          service: fanout
+
+  # Laravel core — exposes core_* metrics (SPEC §12.1).
+  # Path is implementer's choice in the SPEC; we assume /metrics on the app port.
+  # If core ends up exposing metrics elsewhere, only this block needs to change.
+  - job_name: core
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["core:8000"]
+        labels:
+          service: core
+
+  # Prometheus self-scrape (useful for the demo / debugging the rig itself).
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

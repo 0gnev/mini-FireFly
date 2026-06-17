@@ -1,0 +1,98 @@
+# CI overrides (SPEC §15) — merged on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait
+#
+# Goals:
+#   * No host port publishing — CI runs the scenario suite from inside the
+#     compose network (or a test-runner container), so published ports only
+#     cause collisions on shared runners. `ports: !reset []` drops them.
+#   * Healthcheck waits tuned so `--wait` is a meaningful gate on slower
+#     GitHub-hosted runners (more retries, longer start_period).
+#
+# `!reset` requires Compose v2.24+ (CI uses a current Compose); it removes the
+# inherited `ports` list entirely rather than appending to it.
+
+services:
+  mysql:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 40s
+
+  redis:
+    ports: !reset []
+    healthcheck:
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  clickhouse:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  mock-a:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+  mock-b:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+  mock-c:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+  mock-d:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  fanout:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  core:
+    ports: !reset []
+    healthcheck:
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  prometheus:
+    ports: !reset []
+    healthcheck:
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  grafana:
+    ports: !reset []
+    healthcheck:
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
