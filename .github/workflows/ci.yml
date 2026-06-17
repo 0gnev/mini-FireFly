@@ -54,6 +54,12 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
+          # Modules live in subdirs and mockprovider has no go.sum (stdlib only),
+          # so point the cache at the files that exist — otherwise setup-go warns
+          # "Dependencies file is not found" and skips caching.
+          cache-dependency-path: |
+            fanout/go.sum
+            mockprovider/go.mod
       - name: gofmt
         if: matrix.stack == 'go'
         run: |
@@ -121,6 +127,12 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
+          # Modules live in subdirs and mockprovider has no go.sum (stdlib only),
+          # so point the cache at the files that exist — otherwise setup-go warns
+          # "Dependencies file is not found" and skips caching.
+          cache-dependency-path: |
+            fanout/go.sum
+            mockprovider/go.mod
       - name: Go tests -race
         if: matrix.stack == 'go'
         run: |

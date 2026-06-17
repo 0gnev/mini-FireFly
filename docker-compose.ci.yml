@@ -1,19 +1,18 @@
 # CI overrides (SPEC §15) — merged on top of docker-compose.yml:
 #   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait
 #
-# Goals:
-#   * No host port publishing — CI runs the scenario suite from inside the
-#     compose network (or a test-runner container), so published ports only
-#     cause collisions on shared runners. `ports: !reset []` drops them.
-#   * Healthcheck waits tuned so `--wait` is a meaningful gate on slower
-#     GitHub-hosted runners (more retries, longer start_period).
+# Purpose: tune healthcheck waits so `--wait` is a meaningful gate on slower
+# GitHub-hosted runners (more retries, longer start_period).
 #
-# `!reset` requires Compose v2.24+ (CI uses a current Compose); it removes the
-# inherited `ports` list entirely rather than appending to it.
+# NOTE on ports: the integration runner (scripts/itest.sh) drives the API over
+# the HOST (http://localhost:8000, mock host ports 8081-8084, fanout 8090), so we
+# KEEP the base file's published ports here. GitHub-hosted runners are isolated,
+# single-tenant VMs, so there is no host-port collision risk. (If you ever run
+# this on a shared/self-hosted runner, drive itest from inside the compose
+# network instead of unpublishing ports.)
 
 services:
   mysql:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 5s
@@ -21,7 +20,6 @@ services:
       start_period: 40s
 
   redis:
-    ports: !reset []
     healthcheck:
       interval: 3s
       timeout: 3s
@@ -29,7 +27,6 @@ services:
       start_period: 5s
 
   clickhouse:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 5s
@@ -37,28 +34,24 @@ services:
       start_period: 20s
 
   mock-a:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
   mock-b:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
   mock-c:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
   mock-d:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 3s
@@ -66,7 +59,6 @@ services:
       start_period: 10s
 
   fanout:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 3s
@@ -74,7 +66,6 @@ services:
       start_period: 10s
 
   core:
-    ports: !reset []
     healthcheck:
       interval: 5s
       timeout: 5s
@@ -82,7 +73,6 @@ services:
       start_period: 30s
 
   prometheus:
-    ports: !reset []
     healthcheck:
       interval: 10s
       timeout: 3s
@@ -90,7 +80,6 @@ services:
       start_period: 10s
 
   grafana:
-    ports: !reset []
     healthcheck:
       interval: 10s
       timeout: 3s
