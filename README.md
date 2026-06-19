@@ -1,17 +1,50 @@
-# mini-FireFly — Flight Provider Aggregation Platform
+# mini-FireFly — Resilient Flight Provider Aggregation Platform
 
-A pluggable flight-data aggregator: one public API fans a search out to N heterogeneous
-mock flight providers in parallel, normalizes their incompatible formats into one canonical
-model, and returns an aggregated result **within a hard deadline** — surviving partial
-failures, slow providers, rate limits, and malformed payloads.
+Production-style backend system that aggregates flight offers from multiple unreliable providers.
 
-The engineering value is the **integration layer**, not flight business logic: per-provider
-adapters, circuit breakers, retries with backoff, rate limiting, caching, idempotency,
-partial results, and live per-provider health monitoring. Adding a provider is exactly one
-adapter implementation plus one registry entry (see [Adding a provider](#adding-a-provider)).
+The project demonstrates:
+- Laravel API orchestration
+- Go-based concurrent fan-out
+- Redis caching and rate limiting
+- ClickHouse analytics logging
+- queue-based asynchronous writes
+- circuit breakers and retries
+- partial failure handling
+- provider health monitoring
+- Prometheus/Grafana observability
+- CI with tests, linters, and static analysis
 
-[SPEC.md](SPEC.md) is the single source of truth. Operational procedures live in
-[RUNBOOK.md](RUNBOOK.md); a rehearsed incident writeup is in [POSTMORTEM.md](POSTMORTEM.md).
+The core engineering problem is not flight search itself. The goal is to model a realistic integration layer where external providers are slow, inconsistent, malformed, rate-limited, or temporarily unavailable — while the public API still returns a useful response within a hard deadline.
+
+![CI](https://github.com/0gnev/mini-FireFly/actions/workflows/ci.yml/badge.svg)
+
+`mini-FireFly` is a production-style simulation, not a real airline integration. It uses mock providers to make provider slowness, malformed payloads, 429s, 500s, timeouts, and recovery deterministic and reviewable.
+
+[SPEC.md](SPEC.md) is the detailed engineering specification. Architecture decisions live in
+[docs/ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md), operational procedures in
+[RUNBOOK.md](RUNBOOK.md), testing strategy in [docs/TESTING.md](docs/TESTING.md), observability
+notes in [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md), and a rehearsed incident writeup in
+[POSTMORTEM.md](POSTMORTEM.md).
+
+## What this project demonstrates
+
+### Aggregated search response
+
+![API search response](docs/assets/api-search-response.png)
+
+The public API returns normalized offers from multiple providers, sorted by price and departure time, together with a per-provider status map.
+
+### Provider failure handling
+
+![Partial failure demo](docs/assets/demo-partial-failure.png)
+
+When one provider is down or slow, the API returns partial results instead of failing the entire request.
+
+### Provider health dashboard
+
+![Grafana provider health](docs/assets/grafana-provider-health.png)
+
+Grafana shows provider latency, status breakdown, breaker state, cache hit ratio, and error trends.
 
 ## Stack
 
@@ -26,6 +59,8 @@ adapter implementation plus one registry entry (see [Adding a provider](#adding-
 | Metrics / dashboards | Prometheus + Grafana (`deploy/`) |
 
 ## Architecture
+
+![Architecture overview](docs/assets/architecture-overview.png)
 
 ```
                  ┌─────────────────────────────────────────────────────────┐
@@ -74,7 +109,8 @@ Laravel queue and performs the async ClickHouse `provider_calls` inserts.
 ## Quickstart
 
 Requires Docker + Docker Compose v2. No local Go or PHP toolchain needed — everything
-builds and runs in containers. `jq` is optional (pretty demo output).
+builds and runs in containers. `jq` is required for `make demo` because the demo verifies
+JSON response fields.
 
 ```sh
 make up      # compose up -d --wait, then run migrations + seed providers a–d
@@ -135,19 +171,42 @@ make logs / ps / config
 
 ## Demo walkthrough (`scripts/demo.sh`)
 
-`make demo` runs five scripted, narrated steps against the live stack (open the
-**Provider Health** dashboard in Grafana to watch it live):
+`make demo` runs ten scripted, narrated checks against the live stack (open the
+**Provider Health** dashboard in Grafana to watch it live). It exits non-zero if an expected
+behavior is missing.
 
-1. **Baseline search** — all providers healthy → `cache:miss`, `partial:false`, 4× `ok`.
-2. **Repeat identical search** — served from Redis → `cache:hit`, no fan-out.
-3. **`chaos-down d` + loop searches** — d goes `timeout → … → breaker_open` (breaker trips
-   on the 6th call, after 5 failures). Point at the breaker timeline panel.
-4. **Recover d → stable**, wait out the 15 s cooldown, keep searching — the half-open probe
-   succeeds and the breaker closes; `d:ok` again, `partial:false`.
-5. **Booking + idempotent replay** — first `POST /bookings` → 201; replay with the same
-   key + body → 200 with header `Idempotency-Replayed: true`.
+1. **Healthy baseline search** — all providers healthy → HTTP 200, `cache:miss`, `partial:false`.
+2. **Cache hit on repeated query** — same query within TTL → HTTP 200, `cache:hit`.
+3. **Slow provider scenario** — provider b is set to `slow`; the public API remains bounded.
+4. **Down provider scenario** — provider d is set to `down`; d reports `timeout`, `error`, or `breaker_open`.
+5. **Circuit breaker opening** — repeated unique searches drive d to `breaker_open`.
+6. **Partial result response** — the API still returns HTTP 200 with `partial:true`.
+7. **Provider recovery** — provider d is restored to `stable`.
+8. **Circuit breaker closing** — after cooldown, a successful probe returns d to `ok`.
+9. **Booking creation** — first `POST /bookings` returns 201 with a `bk_` id.
+10. **Idempotent booking replay** — same key and body return 200 with `Idempotency-Replayed: true`.
 
-Verified end-to-end on the live stack (exit 0): all five steps behave as described.
+![Cache hit demo](docs/assets/demo-cache-hit.png)
+
+Verified behavior is also covered by the integration suite (`tests/integration/i1_*.sh` through
+`i8_*.sh`).
+
+## API documentation
+
+OpenAPI specification is available in [`docs/openapi.yaml`](docs/openapi.yaml).
+
+## Quality gates
+
+| Area | Tool |
+|---|---|
+| PHP tests | PHPUnit / Laravel test runner |
+| PHP style | Laravel Pint |
+| PHP static analysis | PHPStan |
+| Go tests | go test |
+| Go formatting | gofmt |
+| Go static checks | go vet |
+| Integration tests | Docker Compose CI stack |
+| Observability | Prometheus + Grafana |
 
 ## Design decisions
 
@@ -300,14 +359,21 @@ entry + one config row**. Verified against the actual code (`fanout/internal/ada
 No changes to the fan-out core, breaker, limiter, retry, or bulkhead are required — those
 operate uniformly on every registered provider.
 
+## Repository hygiene
+
+Issue templates, a pull request template, Dependabot, and recommended labels are included
+under `.github/` and [docs/GITHUB_LABELS.md](docs/GITHUB_LABELS.md). New work should use the
+templates to make acceptance criteria, testing notes, documentation impact, and failure
+behavior explicit.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every PR and push to `main`:
 `lint` → `unit` → `security` → `integration` → `build & push` → `deploy` (optional).
 
-- **lint** — Pint + PHPStan (PHP); gofmt, `go vet`, and golangci-lint (version pinned;
+- **lint** — Composer validation, Pint, and PHPStan (PHP); gofmt, `go vet`, and golangci-lint (version pinned;
   config in each module's `.golangci.yml`: standard set + `errcheck` + `gocritic`).
-- **unit** — `php artisan test` against a real Redis service (so the idempotency Feature
+- **unit** — Composer validation and `php artisan test` against a real Redis service (so the idempotency Feature
   tests run instead of self-skipping) and `go test -race` for both Go modules.
 - **security** — Trivy filesystem scan (vulnerable deps, leaked secrets, Dockerfile
   misconfig), report-only by default. Dependabot (`.github/dependabot.yml`) opens weekly

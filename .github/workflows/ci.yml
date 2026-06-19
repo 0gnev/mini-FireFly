@@ -43,6 +43,10 @@ jobs:
           php-version: ${{ env.PHP_VERSION }}
           tools: composer:v2
           coverage: none
+      - name: Composer validate (core)
+        if: matrix.stack == 'php'
+        working-directory: core
+        run: composer validate --strict
       - name: Composer install (core)
         if: matrix.stack == 'php'
         working-directory: core
@@ -130,6 +134,10 @@ jobs:
           tools: composer:v2
           extensions: pdo_sqlite, sqlite3, redis
           coverage: none
+      - name: Composer validate (core)
+        if: matrix.stack == 'php'
+        working-directory: core
+        run: composer validate --strict
       - name: Composer install (core)
         if: matrix.stack == 'php'
         working-directory: core

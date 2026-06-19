@@ -1,0 +1,487 @@
+openapi: 3.0.3
+info:
+  title: mini-FireFly API
+  version: "1.0.0"
+  description: >
+    Public API for the mini-FireFly flight provider aggregation simulation.
+    The service aggregates unreliable mock providers and returns partial results
+    when at least one provider fails.
+servers:
+  - url: http://localhost:8000
+paths:
+  /api/v1/search:
+    post:
+      summary: Search aggregated flight offers
+      description: >
+        Validates a canonical search query, fans out to enabled providers, merges
+        normalized offers, and returns a provider status map. Provider failures
+        are represented in the response body; a partial result is still HTTP 200
+        when the aggregator itself is working.
+      operationId: searchFlights
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+            examples:
+              baseline:
+                value:
+                  origin: BEG
+                  destination: AMS
+                  depart_date: "2026-07-20"
+                  return_date: null
+                  passengers: 1
+      responses:
+        "200":
+          description: Aggregated response. `partial` indicates whether at least one provider did not return `ok`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+              examples:
+                healthy:
+                  value:
+                    request_id: req_01JZ2T2R9N4A7RZVZ1D3Z7B2VQ
+                    cache: miss
+                    partial: false
+                    offers:
+                      - offer_id: d:7f3c9b2e
+                        provider: d
+                        price: "139.90"
+                        currency: EUR
+                        depart_at: "2026-07-20T08:40:00+02:00"
+                        arrive_at: "2026-07-20T11:05:00+02:00"
+                        duration_minutes: 145
+                        stops: 0
+                        segments:
+                          - flight_no: JU351
+                            carrier: JU
+                            origin: BEG
+                            destination: AMS
+                            depart_at: "2026-07-20T08:40:00+02:00"
+                            arrive_at: "2026-07-20T11:05:00+02:00"
+                    providers:
+                      a:
+                        status: ok
+                        latency_ms: 83
+                        offers: 4
+                        attempts: 1
+                      b:
+                        status: ok
+                        latency_ms: 120
+                        offers: 5
+                        attempts: 1
+                      c:
+                        status: ok
+                        latency_ms: 97
+                        offers: 4
+                        attempts: 1
+                      d:
+                        status: ok
+                        latency_ms: 90
+                        offers: 5
+                        attempts: 1
+                    meta:
+                      deadline_ms: 2000
+                      elapsed_ms: 181
+                      total_offers: 18
+                      deduplicated: 2
+                partial:
+                  value:
+                    request_id: req_01JZ2T36E0A9ZYJ8PZ8E2V8J6P
+                    cache: miss
+                    partial: true
+                    offers: []
+                    providers:
+                      a:
+                        status: timeout
+                        latency_ms: 1900
+                        offers: 0
+                        attempts: 2
+                      b:
+                        status: breaker_open
+                        latency_ms: 0
+                        offers: 0
+                        attempts: 0
+                    meta:
+                      deadline_ms: 2000
+                      elapsed_ms: 1907
+                      total_offers: 0
+                      deduplicated: 0
+        "422":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+              example:
+                message: The origin field must be 3 characters.
+                errors:
+                  origin:
+                    - The origin field must be 3 characters.
+  /api/v1/bookings:
+    post:
+      summary: Create an idempotent booking
+      description: >
+        Creates a simplified confirmed booking. The `Idempotency-Key` header is
+        required. Replaying the same key and same request body returns the
+        original response with HTTP 200 and `Idempotency-Replayed: true`.
+        Reusing the same key with a different body returns HTTP 409.
+      operationId: createBooking
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookingRequest"
+            example:
+              offer_id: a:7f3c9b2e
+              passenger:
+                first_name: Ilia
+                last_name: K
+                email: x@y.z
+      responses:
+        "201":
+          description: Booking created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+              example:
+                booking_id: bk_01JZ2T5ZY1VNT6G9H4M76X7R9Q
+                status: confirmed
+                offer_id: a:7f3c9b2e
+                passenger:
+                  first_name: Ilia
+                  last_name: K
+                  email: x@y.z
+                created_at: "2026-06-19T01:10:00+00:00"
+        "200":
+          description: Idempotent replay of an existing booking response.
+          headers:
+            Idempotency-Replayed:
+              schema:
+                type: string
+                enum: ["true"]
+              description: Present only on successful idempotent replays.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                reusedWithDifferentBody:
+                  value:
+                    error: idempotency_key_reuse
+                inProgress:
+                  value:
+                    error: idempotency_in_progress
+                    message: A request with this key is being processed.
+        "422":
+          description: Invalid booking body or invalid/missing idempotency key.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ValidationError"
+                  - $ref: "#/components/schemas/Error"
+              examples:
+                invalidKey:
+                  value:
+                    error: invalid_idempotency_key
+                    message: Idempotency-Key header must be 8-128 chars matching [A-Za-z0-9_-].
+                invalidOffer:
+                  value:
+                    message: The offer id is malformed; expected "{provider}:{8 hex chars}".
+                    errors:
+                      offer_id:
+                        - The offer_id is malformed; expected "{provider}:{8 hex chars}".
+  /api/v1/bookings/{id}:
+    get:
+      summary: Fetch a booking
+      operationId: getBooking
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: bk_01JZ2T5ZY1VNT6G9H4M76X7R9Q
+          description: Booking id with or without the `bk_` prefix.
+      responses:
+        "200":
+          description: Booking found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+        "404":
+          description: Booking not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: not_found
+                message: Booking not found.
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: "^[A-Za-z0-9_-]{8,128}$"
+      description: Stable client-generated key for exactly-once booking semantics.
+  schemas:
+    SearchRequest:
+      type: object
+      required:
+        - origin
+        - destination
+        - depart_date
+        - passengers
+      properties:
+        origin:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: "^[A-Za-z]{3}$"
+          example: BEG
+        destination:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: "^[A-Za-z]{3}$"
+          example: AMS
+        depart_date:
+          type: string
+          format: date
+          description: Must be today through today + 365 days.
+          example: "2026-07-20"
+        return_date:
+          type: string
+          nullable: true
+          format: date
+          description: Optional; when present, must be on or after `depart_date`.
+          example: null
+        passengers:
+          type: integer
+          minimum: 1
+          maximum: 9
+          example: 1
+    SearchResponse:
+      type: object
+      required:
+        - request_id
+        - cache
+        - partial
+        - offers
+        - providers
+        - meta
+      properties:
+        request_id:
+          type: string
+        cache:
+          type: string
+          enum: [hit, miss]
+        partial:
+          type: boolean
+          description: True when any enabled provider status is not `ok`.
+        offers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Offer"
+        providers:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProviderStatus"
+        meta:
+          $ref: "#/components/schemas/SearchMeta"
+    ProviderStatus:
+      type: object
+      required:
+        - status
+        - latency_ms
+        - offers
+        - attempts
+      properties:
+        status:
+          $ref: "#/components/schemas/ProviderStatusCode"
+        latency_ms:
+          type: integer
+          minimum: 0
+        offers:
+          type: integer
+          minimum: 0
+        attempts:
+          type: integer
+          minimum: 0
+    ProviderStatusCode:
+      type: string
+      enum:
+        - ok
+        - timeout
+        - error
+        - rate_limited
+        - breaker_open
+        - bad_payload
+        - skipped_disabled
+      description: >
+        `ok` means the provider returned normalized offers. `timeout` means the
+        provider did not complete inside its deadline. `error` means an upstream
+        failure such as 500 or connection failure. `rate_limited` means the
+        provider or client-side limiter rejected the call. `breaker_open` means
+        the circuit breaker short-circuited the call. `bad_payload` means the
+        response could not be parsed. `skipped_disabled` is reserved for disabled
+        providers.
+    SearchMeta:
+      type: object
+      required:
+        - deadline_ms
+        - elapsed_ms
+        - total_offers
+        - deduplicated
+      properties:
+        deadline_ms:
+          type: integer
+        elapsed_ms:
+          type: integer
+        total_offers:
+          type: integer
+        deduplicated:
+          type: integer
+    Offer:
+      type: object
+      required:
+        - offer_id
+        - provider
+        - price
+        - currency
+        - depart_at
+        - arrive_at
+        - duration_minutes
+        - stops
+        - segments
+      properties:
+        offer_id:
+          type: string
+          pattern: "^[a-z]:[0-9a-f]{8}$"
+        provider:
+          type: string
+        price:
+          type: string
+          example: "139.90"
+        currency:
+          type: string
+          example: EUR
+        depart_at:
+          type: string
+          format: date-time
+        arrive_at:
+          type: string
+          format: date-time
+        duration_minutes:
+          type: integer
+        stops:
+          type: integer
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Segment"
+    Segment:
+      type: object
+      properties:
+        flight_no:
+          type: string
+        carrier:
+          type: string
+        origin:
+          type: string
+        destination:
+          type: string
+        depart_at:
+          type: string
+          format: date-time
+        arrive_at:
+          type: string
+          format: date-time
+    BookingRequest:
+      type: object
+      required:
+        - offer_id
+        - passenger
+      properties:
+        offer_id:
+          type: string
+          pattern: "^[a-z]:[0-9a-f]{8}$"
+        passenger:
+          type: object
+          required:
+            - first_name
+            - last_name
+            - email
+          properties:
+            first_name:
+              type: string
+              maxLength: 128
+            last_name:
+              type: string
+              maxLength: 128
+            email:
+              type: string
+              format: email
+              maxLength: 255
+    Booking:
+      type: object
+      required:
+        - booking_id
+        - status
+        - offer_id
+        - passenger
+        - created_at
+      properties:
+        booking_id:
+          type: string
+          example: bk_01JZ2T5ZY1VNT6G9H4M76X7R9Q
+        status:
+          type: string
+          enum: [confirmed]
+        offer_id:
+          type: string
+        passenger:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          nullable: true
+          format: date-time
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+    ValidationError:
+      type: object
+      properties:
+        message:
+          type: string
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
