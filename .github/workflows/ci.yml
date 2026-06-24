@@ -33,7 +33,7 @@ jobs:
       matrix:
         stack: [php, go]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # ---- PHP: pint --test + phpstan (level 6+, SPEC §19) ----
       - name: Setup PHP
@@ -123,7 +123,7 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 5s
           --health-timeout 3s --health-retries 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # ---- PHP: pest/phpunit (sqlite in-memory where possible, SPEC §15) ----
       - name: Setup PHP
@@ -179,7 +179,7 @@ jobs:
     name: security scan (trivy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Filesystem scan: vulnerable deps (go.sum / composer.lock), leaked secrets,
       # and Dockerfile/compose misconfig. Report-only (exit-code 0) so transient
       # upstream CVEs don't block merges; findings are visible in the job log.
@@ -201,7 +201,7 @@ jobs:
     needs: [lint, unit]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Bring up stack (CI override, --wait)
         run: |
@@ -218,7 +218,7 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color > compose-logs.txt 2>&1 || true
       - name: Upload compose logs
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: compose-logs
           path: compose-logs.txt
@@ -237,7 +237,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
@@ -301,7 +301,7 @@ jobs:
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Environment-gated SSH deploy. Guarded so it no-ops cleanly until the
       # VPS secrets (DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY) are configured.
       - name: Deploy over SSH
