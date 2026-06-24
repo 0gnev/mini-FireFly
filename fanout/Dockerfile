@@ -13,7 +13,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/fanout ./cmd/fanout
 
 # ---- runtime stage ----
-FROM alpine:3.20
+FROM alpine:3.24
 # tzdata is required for Provider C origin-timezone math (SPEC §5.5); ca-certs
 # for completeness. Run as a non-root user.
 RUN apk add --no-cache tzdata ca-certificates && \
