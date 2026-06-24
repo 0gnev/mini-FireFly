@@ -26,7 +26,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/mockprovider ./cmd/mockprovider
 # ---- runtime stage ----
 # alpine (not scratch) so the binary has tzdata for real timezone math (Provider
 # C local-time conversions, Provider B UTC epochs).
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache tzdata ca-certificates && adduser -D -u 10001 app
 WORKDIR /app
 
