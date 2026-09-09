@@ -9,7 +9,7 @@
         "php": "^8.3",
         "guzzlehttp/guzzle": "^7.8",
         "laravel/framework": "^11.31",
-        "laravel/tinker": "^2.9",
+        "laravel/tinker": "^3.0",
         "smi2/phpclickhouse": "^1.5",
         "symfony/uid": "^7.0"
     },
